@@ -64,51 +64,67 @@ module S3FTP
     def get_file(path, &block)
       key = scoped_path(path)
 
-      on_error   = Proc.new {|response| yield false }
-      on_success = Proc.new {|response| yield response.response }
+      if not admin? and key == @config[:remote_passwd_file]
+        yield false
+      else
+        on_error   = Proc.new {|response| yield false }
+        on_success = Proc.new {|response| yield response.response }
 
-      item = Happening::S3::Item.new(aws_bucket, key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
-      item.get(:retry_count => 1, :on_success => on_success, :on_error => on_error)
+        item = Happening::S3::Item.new(aws_bucket, key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
+        item.get(:retry_count => 1, :on_success => on_success, :on_error => on_error)
+      end
     end
 
     def put_file(path, tmp_path, &block)
       key = scoped_path(path)
 
-      bytes      = File.size(tmp_path)
-      on_error   = Proc.new {|response| yield false }
-      on_success = Proc.new {|response| yield bytes  }
+      if not admin? and key == @config[:remote_passwd_file]
+        yield false
+      else
+        bytes      = File.size(tmp_path)
+        on_error   = Proc.new {|response| yield false }
+        on_success = Proc.new {|response| yield bytes  }
 
-      item = Happening::S3::Item.new(aws_bucket, key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
-      item.put(File.binread(tmp_path), :retry_count => 0, :on_success => on_success, :on_error => on_error)
+        item = Happening::S3::Item.new(aws_bucket, key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
+        item.put(File.binread(tmp_path), :retry_count => 0, :on_success => on_success, :on_error => on_error)
+      end
     end
 
     def delete_file(path, &block)
       key = scoped_path(path)
 
-      on_error   = Proc.new {|response| yield false }
-      on_success = Proc.new {|response| yield true  }
+      if not admin? and key == @config[:remote_passwd_file]
+        yield false
+      else
+        on_error   = Proc.new {|response| yield false }
+        on_success = Proc.new {|response| yield true  }
 
-      item = Happening::S3::Item.new(aws_bucket, key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
-      item.delete(:retry_count => 1, :on_success => on_success, :on_error => on_error)
+        item = Happening::S3::Item.new(aws_bucket, key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
+        item.delete(:retry_count => 1, :on_success => on_success, :on_error => on_error)
+      end
     end
 
     def delete_dir(path, &block)
       prefix = scoped_path(path)
 
-      on_error   = Proc.new {|response| yield false }
+      if not admin? and prefix == @config[:remote_passwd_file]
+        yield false
+      else
+        on_error   = Proc.new {|response| yield false }
 
-      item = Happening::S3::Bucket.new(aws_bucket, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret, :prefix => prefix)
-      item.get(:on_error => on_error) do |response|
-        keys = bucket_list_to_full_keys(response.response)
-        delete_object = Proc.new { |key, iter|
-          item = Happening::S3::Item.new(aws_bucket, key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
-          item.delete(:retry_count => 1, :on_error => on_error) do |response|
-            iter.next
-          end
-        }
-        on_complete = Proc.new { yield true }
+        item = Happening::S3::Bucket.new(aws_bucket, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret, :prefix => prefix)
+        item.get(:on_error => on_error) do |response|
+          keys = bucket_list_to_full_keys(response.response)
+          delete_object = Proc.new { |key, iter|
+            item = Happening::S3::Item.new(aws_bucket, key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
+            item.delete(:retry_count => 1, :on_error => on_error) do |response|
+              iter.next
+            end
+          }
+          on_complete = Proc.new { yield true }
 
-        EM::Iterator.new(keys, 5).each(delete_object, on_complete)
+          EM::Iterator.new(keys, 5).each(delete_object, on_complete)
+        end
       end
     end
 
@@ -117,13 +133,17 @@ module S3FTP
       source_obj = aws_bucket + "/" + source_key
       dest_key   = scoped_path(to)
 
-      on_error   = Proc.new {|response| yield false }
-      on_success = Proc.new {|response| yield true  }
+      if not admin? and (source_key == @config[:remote_passwd_file] or dest_key == @config[:remote_passwd_file])
+        yield false
+      else
+        on_error   = Proc.new {|response| yield false }
+        on_success = Proc.new {|response| yield true  }
 
-      item = Happening::S3::Item.new(aws_bucket, dest_key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
-      item.put(nil, :retry_count => 1, :on_error => on_error, :headers => {"x-amz-copy-source" => source_obj}) do |response|
-        item = Happening::S3::Item.new(aws_bucket, source_key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
-        item.delete(:retry_count => 1, :on_success => on_success, :on_error => on_error)
+        item = Happening::S3::Item.new(aws_bucket, dest_key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
+        item.put(nil, :retry_count => 1, :on_error => on_error, :headers => {"x-amz-copy-source" => source_obj}) do |response|
+          item = Happening::S3::Item.new(aws_bucket, source_key, :aws_access_key_id => aws_key, :aws_secret_access_key => aws_secret)
+          item.delete(:retry_count => 1, :on_success => on_success, :on_error => on_error)
+        end
       end
     end
 
@@ -151,11 +171,12 @@ module S3FTP
 
     def scoped_path(path)
       path = "" if path == "/"
-      if admin?
-      	 File.join("/", path)[1,1024]
-      else
-        File.join("/", @user, path)[1,1024]
-      end
+      #if admin?
+      #	 File.join("/", path)[1,1024]
+      #else
+      #  File.join("/", @user, path)[1,1024]
+      #end
+      File.join("/", path)[1,1024]
     end
 
     def aws_bucket
